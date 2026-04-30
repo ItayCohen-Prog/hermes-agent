@@ -587,8 +587,23 @@ def test_session_title_set_errors_when_row_lookup_fails_after_noop(monkeypatch):
         server._sessions.pop("sid", None)
 
 
-def test_session_create_drops_pending_title_on_valueerror(monkeypatch):
-    unblock_agent = threading.Event()
+def test_apply_pending_title_drops_valueerror(monkeypatch):
+    class _FakeDB:
+        def set_session_title(self, _key, _title):
+            raise ValueError("Title already in use")
+
+    monkeypatch.setattr(server, "_get_db", lambda: _FakeDB())
+
+    session = _session()
+    session["pending_title"] = "duplicate title"
+
+    server._apply_pending_title("sid", session)
+
+    assert session["pending_title"] is None
+
+
+def test_session_create_does_not_persist_empty_db_row(monkeypatch):
+    calls = []
 
     class _FakeWorker:
         def __init__(self, key, model):
@@ -604,17 +619,10 @@ def test_session_create_drops_pending_title_on_valueerror(monkeypatch):
         api_key = ""
 
     class _FakeDB:
-        def create_session(self, _key, source="tui", model=None):
-            return None
+        def create_session(self, *args, **kwargs):
+            calls.append((args, kwargs))
 
-        def set_session_title(self, _key, _title):
-            raise ValueError("Title already in use")
-
-    def _make_agent(_sid, _key):
-        unblock_agent.wait(timeout=2.0)
-        return _FakeAgent()
-
-    monkeypatch.setattr(server, "_make_agent", _make_agent)
+    monkeypatch.setattr(server, "_make_agent", lambda _sid, _key: _FakeAgent())
     monkeypatch.setattr(server, "_SlashWorker", _FakeWorker)
     monkeypatch.setattr(server, "_get_db", lambda: _FakeDB())
     monkeypatch.setattr(server, "_session_info", lambda _a: {"model": "x"})
@@ -631,13 +639,11 @@ def test_session_create_drops_pending_title_on_valueerror(monkeypatch):
         {"id": "1", "method": "session.create", "params": {"cols": 80}}
     )
     sid = resp["result"]["session_id"]
-    session = server._sessions[sid]
-    session["pending_title"] = "duplicate title"
-    unblock_agent.set()
-    session["agent_ready"].wait(timeout=2.0)
-
-    assert session["pending_title"] is None
-    server._sessions.pop(sid, None)
+    try:
+        assert server._sessions[sid]["agent_ready"].wait(timeout=2.0)
+        assert calls == []
+    finally:
+        server._sessions.pop(sid, None)
 
 
 def test_config_set_yolo_toggles_session_scope():
