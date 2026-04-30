@@ -732,8 +732,18 @@ async def get_sessions(limit: int = 20, offset: int = 0):
         from hermes_state import SessionDB
         db = SessionDB()
         try:
-            sessions = db.list_sessions_rich(limit=limit, offset=offset)
-            total = db.session_count()
+            sessions = db.list_sessions_rich(
+                limit=limit,
+                offset=offset,
+                include_empty=False,
+            )
+            total = len(
+                db.list_sessions_rich(
+                    limit=10000,
+                    offset=0,
+                    include_empty=False,
+                )
+            )
             now = time.time()
             for s in sessions:
                 s["is_active"] = (
