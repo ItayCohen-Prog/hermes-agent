@@ -8,6 +8,7 @@ import type {
   ReloadMcpResponse
 } from '../gatewayTypes.js'
 import { asRpcResult } from '../lib/rpc.js'
+import { MOUSE_TRACKING_DISABLED } from '../config/env.js'
 
 import {
   type BusyInputMode,
@@ -100,7 +101,7 @@ export const applyDisplay = (cfg: ConfigFullResponse | null, setBell: (v: boolea
     detailsModeCommandOverride: false,
     indicatorStyle: normalizeIndicatorStyle(d.tui_status_indicator),
     inlineDiffs: d.inline_diffs !== false,
-    mouseTracking: normalizeMouseTracking(d),
+    mouseTracking: MOUSE_TRACKING_DISABLED ? false : normalizeMouseTracking(d),
     sections: resolveSections(d.sections),
     showCost: !!d.show_cost,
     showReasoning: !!d.show_reasoning,

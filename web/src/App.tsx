@@ -263,14 +263,20 @@ function buildRoutes(
 
 export default function App() {
   const { t } = useI18n();
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const { manifests, loading: pluginsLoading } = usePlugins();
   const { theme } = useTheme();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [chatHasMounted, setChatHasMounted] = useState(false);
+  const [chatInstanceKey, setChatInstanceKey] = useState("fresh");
   const closeMobile = useCallback(() => setMobileOpen(false), []);
   const isDocsRoute = pathname === "/docs" || pathname === "/docs/";
   const normalizedPath = pathname.replace(/\/$/, "") || "/";
   const isChatRoute = normalizedPath === "/chat";
+  const chatResumeId = useMemo(
+    () => new URLSearchParams(search).get("resume")?.trim() ?? "",
+    [search],
+  );
   const embeddedChat = isDashboardEmbeddedChatEnabled();
 
   // A plugin can replace the built-in /chat page via `tab.override: "/chat"`
@@ -329,6 +335,14 @@ export default function App() {
   );
 
   const layoutVariant = theme.layoutVariant ?? "standard";
+
+  useEffect(() => {
+    if (!isChatRoute) return;
+    setChatHasMounted(true);
+    if (chatResumeId) {
+      setChatInstanceKey(`resume:${chatResumeId}`);
+    }
+  }, [chatResumeId, isChatRoute]);
 
   useEffect(() => {
     if (!mobileOpen) return;
@@ -565,6 +579,7 @@ export default function App() {
 
                 {embeddedChat &&
                   !chatOverriddenByPlugin &&
+                  (chatHasMounted || isChatRoute) &&
                   (pluginsLoading ? (
                     isChatRoute ? (
                       <div
@@ -587,7 +602,7 @@ export default function App() {
                       )}
                       aria-hidden={!isChatRoute}
                     >
-                      <ChatPage isActive={isChatRoute} />
+                      <ChatPage key={chatInstanceKey} isActive={isChatRoute} />
                     </div>
                   ))}
               </div>

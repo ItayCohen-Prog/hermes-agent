@@ -732,8 +732,18 @@ async def get_sessions(limit: int = 20, offset: int = 0):
         from hermes_state import SessionDB
         db = SessionDB()
         try:
-            sessions = db.list_sessions_rich(limit=limit, offset=offset)
-            total = db.session_count()
+            sessions = db.list_sessions_rich(
+                limit=limit,
+                offset=offset,
+                include_empty=False,
+            )
+            total = len(
+                db.list_sessions_rich(
+                    limit=10000,
+                    offset=0,
+                    include_empty=False,
+                )
+            )
             now = time.time()
             for s in sessions:
                 s["is_active"] = (
@@ -2297,6 +2307,7 @@ import asyncio
 from hermes_cli.pty_bridge import PtyBridge, PtyUnavailableError
 
 _RESIZE_RE = re.compile(rb"\x1b\[RESIZE:(\d+);(\d+)\]")
+_SGR_MOUSE_RE = re.compile(rb"\x1b\[<(\d+);(\d+);(\d+)([Mm])")
 _PTY_READ_CHUNK_TIMEOUT = 0.2
 _VALID_CHANNEL_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 # Starlette's TestClient reports the peer as "testclient"; treat it as
@@ -2335,6 +2346,10 @@ def _resolve_chat_argv(
     argv, cwd = _make_tui_argv(PROJECT_ROOT / "ui-tui", tui_dev=False)
     env = os.environ.copy()
     env.setdefault("NODE_ENV", "production")
+    # The browser dashboard forwards pointer movement over websocket and the
+    # PTY can leak SGR mouse reports into the prompt if Ink enables tracking.
+    # Real terminal TUI launches do not go through this resolver.
+    env["HERMES_TUI_DISABLE_MOUSE"] = "1"
 
     if resume:
         env["HERMES_TUI_RESUME"] = resume
@@ -2378,6 +2393,57 @@ def _channel_or_close_code(ws: WebSocket) -> Optional[str]:
     channel = ws.query_params.get("channel", "")
 
     return channel if _VALID_CHANNEL_RE.match(channel) else None
+
+
+def _filter_sgr_mouse_input(
+    raw: bytes,
+    *,
+    last_motion: dict[str, int],
+) -> bytes:
+    """Coalesce/deduplicate SGR mouse reports before writing to the PTY.
+
+    xterm.js may batch many mouse reports into a single WebSocket frame.  If
+    those bytes reach a PTY in a shape the child TUI does not consume, the
+    terminal line discipline can echo fragments into the prompt.  Preserve
+    normal keyboard bytes, keep meaningful mouse events, and drop malformed
+    mouse-looking fragments.
+    """
+    if b"\x1b[<" not in raw:
+        return raw
+
+    out = bytearray()
+    cursor = 0
+    matched = False
+
+    for match in _SGR_MOUSE_RE.finditer(raw):
+        matched = True
+        out.extend(raw[cursor:match.start()])
+        cursor = match.end()
+
+        cb = int(match.group(1))
+        col = int(match.group(2))
+        row = int(match.group(3))
+        released = match.group(4) == b"m"
+        is_motion = (cb & 0x20) != 0 and (cb & 0x40) == 0
+        is_wheel = (cb & 0x40) != 0
+
+        if is_motion and not is_wheel and not released:
+            if (
+                col == last_motion["col"]
+                and row == last_motion["row"]
+                and cb == last_motion["cb"]
+            ):
+                continue
+            last_motion.update({"col": col, "row": row, "cb": cb})
+        else:
+            last_motion.update({"col": -1, "row": -1, "cb": -1})
+
+        out.extend(match.group(0))
+
+    out.extend(raw[cursor:])
+    if not matched:
+        return b""
+    return bytes(out)
 
 
 @app.websocket("/api/pty")
@@ -2446,6 +2512,7 @@ async def pty_ws(ws: WebSocket) -> None:
     reader_task = asyncio.create_task(pump_pty_to_ws())
 
     # --- writer loop: WebSocket → PTY master ----------------------------
+    last_motion = {"col": -1, "row": -1, "cb": -1}
     try:
         while True:
             msg = await ws.receive()
@@ -2465,6 +2532,10 @@ async def pty_ws(ws: WebSocket) -> None:
                 cols = int(match.group(1))
                 rows = int(match.group(2))
                 bridge.resize(cols=cols, rows=rows)
+                continue
+
+            raw = _filter_sgr_mouse_input(raw, last_motion=last_motion)
+            if not raw:
                 continue
 
             bridge.write(raw)

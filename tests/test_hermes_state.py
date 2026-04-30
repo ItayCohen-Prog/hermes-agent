@@ -909,6 +909,16 @@ class TestCounts:
         assert db.session_count(source="cli") == 2
         assert db.session_count(source="telegram") == 1
 
+    def test_session_count_excludes_empty_when_requested(self, db):
+        db.create_session(session_id="empty-cli", source="cli")
+        db.create_session(session_id="active-cli", source="cli")
+        db.create_session(session_id="active-telegram", source="telegram")
+        db.append_message("active-cli", role="user", content="hello")
+        db.append_message("active-telegram", role="user", content="hello")
+
+        assert db.session_count(include_empty=False) == 2
+        assert db.session_count(source="cli", include_empty=False) == 1
+
     def test_message_count_total(self, db):
         assert db.message_count() == 0
         db.create_session(session_id="s1", source="cli")
@@ -1719,6 +1729,15 @@ class TestListSessionsRich:
         # No messages, so last_active falls back to started_at
         assert sessions[0]["last_active"] == sessions[0]["started_at"]
 
+    def test_list_sessions_rich_excludes_empty_when_requested(self, db):
+        db.create_session("empty", "telegram")
+        db.create_session("real", "tui")
+        db.append_message("real", "user", "keep this one")
+
+        sessions = db.list_sessions_rich(include_empty=False)
+
+        assert [s["id"] for s in sessions] == ["real"]
+
     def test_rich_list_includes_title(self, db):
         db.create_session("s1", "cli")
         db.set_session_title("s1", "refactoring auth")
@@ -1860,6 +1879,44 @@ class TestCompressionChainProjection:
         # delegate1 is a child of root1 but NOT a compression continuation.
         # root1's tip must be tip1 (via mid1), not delegate1.
         assert db.get_compression_tip("root1") == "tip1"
+
+    def test_get_compression_tip_handles_legacy_unmarked_root(self, db):
+        """Older browser/TUI resumes could leave the root un-ended while a
+        compressed descendant carried the marker. Still surface the live tip.
+        """
+        import time as _time
+        t0 = _time.time() - 3600
+        db.create_session("root", "tui")
+        db._conn.execute("UPDATE sessions SET started_at=? WHERE id=?", (t0, "root"))
+        db.append_message("root", "user", "start")
+
+        db.create_session("early-child", "tui", parent_session_id="root")
+        db._conn.execute(
+            "UPDATE sessions SET started_at=? WHERE id=?", (t0 + 100, "early-child")
+        )
+        db.append_message("early-child", "user", "not the compression path")
+
+        db.create_session("compressed-child", "tui", parent_session_id="root")
+        db._conn.execute(
+            "UPDATE sessions SET started_at=?, ended_at=?, end_reason=? WHERE id=?",
+            (t0 + 200, t0 + 300, "compression", "compressed-child"),
+        )
+        db.append_message("compressed-child", "user", "compressed path")
+
+        db.create_session("tip", "tui", parent_session_id="compressed-child")
+        db._conn.execute(
+            "UPDATE sessions SET started_at=? WHERE id=?", (t0 + 301, "tip")
+        )
+        db.append_message("tip", "user", "latest")
+        db._conn.commit()
+
+        assert db.get_compression_tip("root") == "tip"
+
+        sessions = db.list_sessions_rich(source="tui", include_empty=False)
+        ids = [s["id"] for s in sessions]
+        assert "tip" in ids
+        assert "root" not in ids
+        assert "early-child" not in ids
 
     def test_list_surfaces_tip_for_compressed_root(self, db):
         """The list must show the tip's id/message_count/preview in place of

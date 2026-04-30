@@ -544,38 +544,56 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
     // pass through if the cell changed.  Parsing is cheap — SGR reports
     // are short literal strings.
     // eslint-disable-next-line no-control-regex -- intentional ESC byte in xterm SGR mouse report parser
-    const SGR_MOUSE_RE = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/;
+    const SGR_MOUSE_RE = /\x1b\[<(\d+);(\d+);(\d+)([Mm])/g;
     let lastMotionCell = { col: -1, row: -1 };
     let lastMotionCb = -1;
     const onDataDisposable = term.onData((data) => {
       if (ws.readyState !== WebSocket.OPEN) return;
 
-      const m = SGR_MOUSE_RE.exec(data);
-      if (m) {
-        const cb = parseInt(m[1], 10);
-        const col = parseInt(m[2], 10);
-        const row = parseInt(m[3], 10);
-        const released = m[4] === "m";
-        // Motion events have bit 0x20 (32) set in the button code.
-        // Wheel events have bit 0x40 (64); always forward wheel.
-        const isMotion = (cb & 0x20) !== 0 && (cb & 0x40) === 0;
-        const isWheel = (cb & 0x40) !== 0;
-        if (isMotion && !isWheel && !released) {
-          if (
-            col === lastMotionCell.col &&
-            row === lastMotionCell.row &&
-            cb === lastMotionCb
-          ) {
-            return; // same cell + same button state; skip redundant report
+      if (data.includes("\x1b[<")) {
+        let next = "";
+        let cursor = 0;
+        let matchedMouse = false;
+        SGR_MOUSE_RE.lastIndex = 0;
+
+        for (const m of data.matchAll(SGR_MOUSE_RE)) {
+          matchedMouse = true;
+          next += data.slice(cursor, m.index);
+          cursor = (m.index ?? 0) + m[0].length;
+
+          const cb = parseInt(m[1], 10);
+          const col = parseInt(m[2], 10);
+          const row = parseInt(m[3], 10);
+          const released = m[4] === "m";
+          // Motion events have bit 0x20 (32) set in the button code.
+          // Wheel events have bit 0x40 (64); always forward wheel.
+          const isMotion = (cb & 0x20) !== 0 && (cb & 0x40) === 0;
+          const isWheel = (cb & 0x40) !== 0;
+          if (isMotion && !isWheel && !released) {
+            if (
+              col === lastMotionCell.col &&
+              row === lastMotionCell.row &&
+              cb === lastMotionCb
+            ) {
+              continue; // same cell + same button state; skip redundant report
+            }
+            lastMotionCell = { col, row };
+            lastMotionCb = cb;
+          } else {
+            // Non-motion event (press, release, wheel) — reset dedup state
+            // so the next motion after this always reports.
+            lastMotionCell = { col: -1, row: -1 };
+            lastMotionCb = -1;
           }
-          lastMotionCell = { col, row };
-          lastMotionCb = cb;
-        } else {
-          // Non-motion event (press, release, wheel) — reset dedup state
-          // so the next motion after this always reports.
-          lastMotionCell = { col: -1, row: -1 };
-          lastMotionCb = -1;
+
+          next += m[0];
         }
+
+        next += data.slice(cursor);
+        if (!matchedMouse) return;
+        if (!next) return;
+        ws.send(next);
+        return;
       }
 
       ws.send(data);

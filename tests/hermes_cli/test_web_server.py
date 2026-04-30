@@ -1944,6 +1944,15 @@ class TestPtyWebSocket:
         assert "channel=abc-123" in url
         assert "token=" in url
 
+    def test_resolved_chat_argv_disables_mouse_tracking_for_browser_pty(self):
+        """The dashboard PTY is not a real terminal; mouse reports can leak
+        into the prompt as ANSI spam, so browser-launched TUI children keep
+        mouse tracking disabled."""
+        _argv, _cwd, env = self.ws_module._resolve_chat_argv()
+
+        assert env is not None
+        assert env["HERMES_TUI_DISABLE_MOUSE"] == "1"
+
     def test_pub_broadcasts_to_events_subscribers(self, monkeypatch):
         """Frame written to /api/pub is rebroadcast verbatim to every
         /api/events subscriber on the same channel."""

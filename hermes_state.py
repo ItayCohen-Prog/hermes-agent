@@ -892,13 +892,16 @@ class SessionDB:
     def get_compression_tip(self, session_id: str) -> Optional[str]:
         """Walk the compression-continuation chain forward and return the tip.
 
-        A compression continuation is a child session where:
+        A compression continuation is usually a child session where:
         1. The parent's ``end_reason = 'compression'``
         2. The child was created AFTER the parent was ended (started_at >= ended_at)
 
         The second condition distinguishes compression continuations from
         delegate subagents or branch children, which can also have a
         ``parent_session_id`` but were created while the parent was still live.
+        Older TUI/dashboard builds could miss the first marker on the root row,
+        so a child whose own ``end_reason = 'compression'`` is also treated as
+        part of the compression chain.
 
         Returns the session_id of the latest continuation in the chain, or the
         input ``session_id`` if it isn't part of a compression chain (or if the
@@ -911,11 +914,13 @@ class SessionDB:
             with self._lock:
                 cursor = self._conn.execute(
                     "SELECT id FROM sessions "
-                    "WHERE parent_session_id = ? "
-                    "  AND started_at >= ("
-                    "      SELECT ended_at FROM sessions "
-                    "      WHERE id = ? AND end_reason = 'compression'"
-                    "  ) "
+                    "WHERE parent_session_id = ? AND ("
+                    "  started_at >= ("
+                    "    SELECT ended_at FROM sessions "
+                    "    WHERE id = ? AND end_reason = 'compression'"
+                    "  )"
+                    "  OR end_reason = 'compression'"
+                    ") "
                     "ORDER BY started_at DESC LIMIT 1",
                     (current, current),
                 )
@@ -932,6 +937,7 @@ class SessionDB:
         limit: int = 20,
         offset: int = 0,
         include_children: bool = False,
+        include_empty: bool = True,
         project_compression_tips: bool = True,
     ) -> List[Dict[str, Any]]:
         """List sessions with preview (first user message) and last active timestamp.
@@ -977,6 +983,8 @@ class SessionDB:
             placeholders = ",".join("?" for _ in exclude_sources)
             where_clauses.append(f"s.source NOT IN ({placeholders})")
             params.extend(exclude_sources)
+        if not include_empty:
+            where_clauses.append("(s.message_count > 0 OR s.tool_call_count > 0)")
 
         where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
         query = f"""
@@ -1022,9 +1030,6 @@ class SessionDB:
         if project_compression_tips and not include_children:
             projected = []
             for s in sessions:
-                if s.get("end_reason") != "compression":
-                    projected.append(s)
-                    continue
                 tip_id = self.get_compression_tip(s["id"])
                 if tip_id == s["id"]:
                     projected.append(s)
@@ -1798,15 +1803,20 @@ class SessionDB:
     # Utility
     # =========================================================================
 
-    def session_count(self, source: str = None) -> int:
+    def session_count(self, source: str = None, include_empty: bool = True) -> int:
         """Count sessions, optionally filtered by source."""
+        where = []
+        params = []
+        if source:
+            where.append("source = ?")
+            params.append(source)
+        if not include_empty:
+            where.append("(message_count > 0 OR tool_call_count > 0)")
+        where_sql = f" WHERE {' AND '.join(where)}" if where else ""
         with self._lock:
-            if source:
-                cursor = self._conn.execute(
-                    "SELECT COUNT(*) FROM sessions WHERE source = ?", (source,)
-                )
-            else:
-                cursor = self._conn.execute("SELECT COUNT(*) FROM sessions")
+            cursor = self._conn.execute(
+                f"SELECT COUNT(*) FROM sessions{where_sql}", params
+            )
             return cursor.fetchone()[0]
 
     def message_count(self, session_id: str = None) -> int:
