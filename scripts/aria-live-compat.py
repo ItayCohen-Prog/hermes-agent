@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -32,18 +33,33 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s aria-live-compat: %(message)s",
 )
 
+INBOUND_RE = re.compile(r"inbound message: platform=discord user=(?P<user>.+?) chat=(?P<chat>\d+) msg=(?P<msg>.+)$")
+RESPONSE_READY_RE = re.compile(
+    r"response ready: platform=discord chat=(?P<chat>\d+) time=(?P<seconds>[\d.]+)s .* response=(?P<chars>\d+) chars"
+)
+SENDING_RE = re.compile(r"\[Discord\] Sending response \((?P<chars>\d+) chars\) to (?P<chat>\d+)")
+SLASH_RE = re.compile(r"\[Discord\] slash '(?P<command>/.+?)' invoked by user=(?P<user>.+?) .* channel=(?P<chat>\d+)")
+
 
 def now_ms() -> int:
     return int(time.time() * 1000)
 
 
 def event(kind: str, message: str, **data):
+    channel_id = data.get("channelId")
     return {
         "type": kind,
-        "sessionKey": "hermes-gateway",
+        "sessionKey": f"discord:hermes:{channel_id}" if channel_id else "hermes-gateway",
         "timestamp": now_ms(),
         "data": {"message": message, **data},
     }
+
+
+def _unquote_log_value(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] == "'":
+        return value[1:-1]
+    return value
 
 
 def parse_crontab():
@@ -144,18 +160,64 @@ def classify(line: str):
     if not msg:
         return None
 
-    if "Connected as A.R.I.A." in msg:
-        return event("system", "Hermes Discord gateway connected", source="gateway")
-    if "slash '/" in msg:
-        return event("llm_input", msg, source="gateway")
-    if "Sending response" in msg:
-        return event("llm_output", msg, source="gateway")
+    slash = SLASH_RE.search(msg)
+    if slash:
+        channel_id = slash.group("chat")
+        command = slash.group("command")
+        return event(
+            "message_received",
+            f"{slash.group('user')} ran {command}",
+            channelId=channel_id,
+            channel="Discord",
+            **{"from": slash.group("user")},
+            contentPreview=command,
+            contentLength=len(command),
+        )
+
+    inbound = INBOUND_RE.search(msg)
+    if inbound:
+        channel_id = inbound.group("chat")
+        content = _unquote_log_value(inbound.group("msg"))
+        return event(
+            "message_received",
+            "Discord message received",
+            channelId=channel_id,
+            channel="Discord",
+            **{"from": inbound.group("user")},
+            contentPreview=content[:500],
+            contentLength=len(content),
+        )
+
+    ready = RESPONSE_READY_RE.search(msg)
+    if ready:
+        channel_id = ready.group("chat")
+        seconds = float(ready.group("seconds"))
+        return event(
+            "agent_end",
+            "Hermes response ready",
+            channelId=channel_id,
+            success=True,
+            durationMs=int(seconds * 1000),
+            contentLength=int(ready.group("chars")),
+        )
+
+    sending = SENDING_RE.search(msg)
+    if sending:
+        channel_id = sending.group("chat")
+        return event(
+            "message_sent",
+            "Discord response sent",
+            channelId=channel_id,
+            channel="Discord",
+            to=channel_id,
+            contentLength=int(sending.group("chars")),
+            success=True,
+        )
+
     if "Unauthorized user" in msg or "Ignoring message" in msg:
         return event("error", msg, source="gateway")
     if any(token in msg for token in ("ERROR", "Traceback", "Exception", "failed", "Failed")):
         return event("error", msg, source="gateway")
-    if any(token in msg for token in ("INFO gateway", "INFO agent", "tool", "Tool", "run_agent")):
-        return event("system", msg, source="gateway")
 
     return None
 
