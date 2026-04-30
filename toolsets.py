@@ -60,6 +60,10 @@ _HERMES_CORE_TOOLS = [
     "send_message",
     # Home Assistant smart home control (gated on HASS_TOKEN via check_fn)
     "ha_list_entities", "ha_get_state", "ha_list_services", "ha_call_service",
+    # Aria-specific local workspace/vector/PC helpers
+    "aria_dashboard_status", "aria_workspace_paths", "aria_read_public_memory", "aria_transcript_search",
+    "aria_vector_search", "aria_vector_reindex",
+    "aria_pc_status", "aria_pc_ensure", "aria_pc_ssh_command",
 ]
 
 
@@ -199,6 +203,24 @@ TOOLSETS = {
     "homeassistant": {
         "description": "Home Assistant smart home control and monitoring",
         "tools": ["ha_list_entities", "ha_get_state", "ha_list_services", "ha_call_service"],
+        "includes": []
+    },
+
+    "aria_workspace": {
+        "description": "Aria workspace status, paths, and safe public memory/docs access",
+        "tools": ["aria_dashboard_status", "aria_workspace_paths", "aria_read_public_memory", "aria_transcript_search"],
+        "includes": []
+    },
+
+    "aria_vector": {
+        "description": "Aria vector-memory search and safe reindex wrapper",
+        "tools": ["aria_vector_search", "aria_vector_reindex"],
+        "includes": []
+    },
+
+    "aria_pc": {
+        "description": "Aria PC bridge status, ensure, and SSH command wrappers without key exposure",
+        "tools": ["aria_pc_status", "aria_pc_ensure", "aria_pc_ssh_command"],
         "includes": []
     },
 

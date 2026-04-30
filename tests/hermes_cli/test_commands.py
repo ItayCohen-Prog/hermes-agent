@@ -107,6 +107,8 @@ class TestResolveCommand:
         assert resolve_command("set-home").name == "sethome"
         assert resolve_command("reload_mcp").name == "reload-mcp"
         assert resolve_command("tasks").name == "agents"
+        assert resolve_command("compact").name == "compress"
+        assert resolve_command("context").name == "status"
 
     def test_leading_slash_stripped(self):
         assert resolve_command("/help").name == "help"
@@ -142,6 +144,8 @@ class TestDerivedDicts:
         assert "/exit" in COMMANDS
         assert "/reload_mcp" in COMMANDS
         assert "/gateway" in COMMANDS
+        assert "/compact" in COMMANDS
+        assert "/context" in COMMANDS
 
     def test_commands_by_category_covers_all_categories(self):
         registry_categories = {cmd.category for cmd in COMMAND_REGISTRY if not cmd.gateway_only}
@@ -180,6 +184,10 @@ class TestGatewayKnownCommands:
     def test_bg_alias_in_gateway(self):
         assert "bg" in GATEWAY_KNOWN_COMMANDS
         assert "background" in GATEWAY_KNOWN_COMMANDS
+
+    def test_aria_compat_aliases_in_gateway(self):
+        assert "compact" in GATEWAY_KNOWN_COMMANDS
+        assert "context" in GATEWAY_KNOWN_COMMANDS
 
     def test_is_frozenset(self):
         assert isinstance(GATEWAY_KNOWN_COMMANDS, frozenset)
@@ -250,6 +258,8 @@ class TestSlackSubcommandMap:
         mapping = slack_subcommand_map()
         assert "bg" in mapping
         assert "reset" in mapping
+        assert "compact" in mapping
+        assert "context" in mapping
 
     def test_excludes_cli_only_without_config_gate(self):
         mapping = slack_subcommand_map()
@@ -309,6 +319,8 @@ class TestSlackNativeSlashes:
         assert "btw" in names
         assert "bg" in names
         assert "reset" in names
+        assert "compact" in names
+        assert "context" in names
         assert "q" in names
 
     def test_telegram_parity(self):
@@ -452,6 +464,14 @@ class TestSlashCommandCompleter:
         assert "reset" in texts
         assert "retry" in texts
         assert "reload-mcp" in texts
+
+    def test_aria_compat_aliases_complete(self):
+        compact_texts = {item.text for item in _completions(SlashCommandCompleter(), "/comp")}
+        context_texts = {item.text for item in _completions(SlashCommandCompleter(), "/cont")}
+
+        assert "compact" in compact_texts
+        assert "compress" in compact_texts
+        assert "context" in context_texts
 
     def test_builtin_completion_display_meta_shows_description(self):
         completions = _completions(SlashCommandCompleter(), "/help")

@@ -1,0 +1,6 @@
+name: aria_compat
+version: 0.1.0
+description: "Aria compatibility commands, routing hints, cron dry-run import, and aria-live helpers for Hermes-as-Aria migration."
+author: "Hermes Agent"
+hooks:
+  - pre_gateway_dispatch
