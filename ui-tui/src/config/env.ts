@@ -1,7 +1,8 @@
 const truthy = (v?: string) => /^(?:1|true|yes|on)$/i.test((v ?? '').trim())
 
 export const STARTUP_RESUME_ID = (process.env.HERMES_TUI_RESUME ?? '').trim()
-export const MOUSE_TRACKING = !truthy(process.env.HERMES_TUI_DISABLE_MOUSE)
+export const MOUSE_TRACKING_DISABLED = truthy(process.env.HERMES_TUI_DISABLE_MOUSE)
+export const MOUSE_TRACKING = !MOUSE_TRACKING_DISABLED
 export const NO_CONFIRM_DESTRUCTIVE = truthy(process.env.HERMES_TUI_NO_CONFIRM)
 
 // Skip AlternateScreen — TUI renders into the primary buffer so the host

@@ -2346,6 +2346,10 @@ def _resolve_chat_argv(
     argv, cwd = _make_tui_argv(PROJECT_ROOT / "ui-tui", tui_dev=False)
     env = os.environ.copy()
     env.setdefault("NODE_ENV", "production")
+    # The browser dashboard forwards pointer movement over websocket and the
+    # PTY can leak SGR mouse reports into the prompt if Ink enables tracking.
+    # Real terminal TUI launches do not go through this resolver.
+    env["HERMES_TUI_DISABLE_MOUSE"] = "1"
 
     if resume:
         env["HERMES_TUI_RESUME"] = resume
