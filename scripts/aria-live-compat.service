@@ -1,0 +1,18 @@
+[Unit]
+Description=Aria Live compatibility websocket for Hermes gateway
+After=network-online.target hermes-gateway-aria.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aria
+Group=aria
+WorkingDirectory=/home/aria/hermes-agent
+Environment="HOME=/home/aria"
+Environment="PATH=/home/aria/hermes-agent/venv/bin:/usr/bin:/bin"
+ExecStart=/home/aria/hermes-agent/venv/bin/python /home/aria/hermes-agent/scripts/aria-live-compat.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
